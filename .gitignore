@@ -1,0 +1,8 @@
+**/__pycache__/
+data/
+crossdocked_data/
+motivation_analysis/
+retrieval_case/
+*dir/
+Uni-Core-main/
+*.pt
