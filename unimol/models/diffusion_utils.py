@@ -114,13 +114,23 @@ def q_v_sample(log_v0, log_alphas_cumprod_v, log_one_minus_alphas_cumprod_v, t, 
         log_sample = index_to_log_onehot(sample_index, 30)
         return sample_index, log_sample
 
-def sample_time(num_graphs, num_timesteps, device, method='symmetric'):
+def sample_time(num_graphs, num_timesteps, device, method='symmetric', low_ratio=0.3):
     if method == 'symmetric':
         time_step = torch.randint(
             0, num_timesteps, size=(num_graphs // 2 + 1,), device=device)
         time_step = torch.cat(
             [time_step, num_timesteps - time_step - 1], dim=0)[:num_graphs]
         pt = torch.ones_like(time_step).float() / num_timesteps
+        return time_step, pt
+    elif method == 'mid_symmetric':
+        # only use mid timesteps, i.e., [300,700]
+        t_min = int(num_timesteps * low_ratio)
+        t_max = num_timesteps - t_min 
+        time_step = torch.randint(
+            t_min, t_max, size=(num_graphs // 2 + 1,), device=device)
+        time_step = torch.cat(
+            [time_step, num_timesteps - time_step - 1], dim=0)[:num_graphs]
+        pt = torch.ones_like(time_step).float() / (t_max - t_min)
         return time_step, pt
 
     else:
@@ -176,21 +186,49 @@ def diffusion_loss(
     time_step,        
     batch_ligand 
 ):
-   
-    target_pos = ligand_pos            
-    pred_pos   = pred_ligand_pos        
+    ## using FP32 to prevent NAN/INF and then cast back to FP16
+    target_pos = ligand_pos.float()
+    pred_pos   = pred_ligand_pos.float()
 
-    per_atom_pos_mse = ((pred_pos - target_pos) ** 2).sum(-1)  # (N_atoms,)
+    per_atom_pos_mse = ((pred_pos - target_pos) ** 2).sum(-1)
     loss_pos = scatter_mean(per_atom_pos_mse, batch_ligand, dim=0).mean()
 
+    logits_v = pred_ligand_v.float()
+    log_v_recon = F.log_softmax(logits_v, dim=-1)
 
-    log_v_recon = F.log_softmax(pred_ligand_v, dim=-1)
-    log_v_model_prob = q_v_posterior(log_v_recon, log_ligand_vt, log_alphas_cumprod_v, log_one_minus_alphas_cumprod_v, log_alphas_v, log_one_minus_alphas_v, time_step, batch_ligand,)
-    log_v_true_prob = q_v_posterior(log_ligand_v0, log_ligand_vt, log_alphas_cumprod_v, log_one_minus_alphas_cumprod_v, log_alphas_v, log_one_minus_alphas_v, time_step, batch_ligand,)
+    log_v0 = log_ligand_v0.float()
+    log_vt = log_ligand_vt.float()
 
-    kl_v = compute_v_Lt(log_v_model_prob=log_v_model_prob, log_v0=log_ligand_v0, log_v_true_prob=log_v_true_prob, t=time_step, batch=batch_ligand,)
+    log_v_model_prob = q_v_posterior(
+        log_v_recon,
+        log_vt,
+        log_alphas_cumprod_v.float(),
+        log_one_minus_alphas_cumprod_v.float(),
+        log_alphas_v.float(),
+        log_one_minus_alphas_v.float(),
+        time_step,
+        batch_ligand,
+    )
+    log_v_true_prob = q_v_posterior(
+        log_v0,
+        log_vt,
+        log_alphas_cumprod_v.float(),
+        log_one_minus_alphas_cumprod_v.float(),
+        log_alphas_v.float(),
+        log_one_minus_alphas_v.float(),
+        time_step,
+        batch_ligand,
+    )
+
+    kl_v = compute_v_Lt(
+        log_v_model_prob=log_v_model_prob,
+        log_v0=log_v0,                      
+        log_v_true_prob=log_v_true_prob,
+        t=time_step,
+        batch=batch_ligand,
+    )
     loss_v = kl_v.mean()
 
     loss = loss_pos + 100 * loss_v
 
-    return loss, loss_pos, loss_v
+    return (loss.to(pred_ligand_pos.dtype), loss_pos.to(pred_ligand_pos.dtype), loss_v.to(pred_ligand_pos.dtype))

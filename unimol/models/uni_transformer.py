@@ -244,7 +244,9 @@ class UniTransformerO2TwoUpdateGeneral(nn.Module):
         self.init_h_emb_layer = self._build_init_h_layer()
         self.base_block = self._build_share_blocks()
    
-        self.cond_list = nn.ModuleList([nn.Linear(512, hidden_dim * 2) for _ in range(self.num_layers)])
+        self.cond_list_lig = nn.ModuleList([nn.Linear(512, hidden_dim * 2) for _ in range(self.num_layers)])
+        self.cond_list_poc = nn.ModuleList([nn.Linear(512, hidden_dim * 2) for _ in range(self.num_layers)])
+        self.h_norm = nn.LayerNorm(hidden_dim, elementwise_affine=False)
 
     def __repr__(self):
         return f'UniTransformerO2(num_blocks={self.num_blocks}, num_layers={self.num_layers}, n_heads={self.n_heads}, ' \
@@ -299,7 +301,7 @@ class UniTransformerO2TwoUpdateGeneral(nn.Module):
         edge_type = F.one_hot(edge_type, num_classes=4)
         return edge_type
 
-    def forward(self, h, x, mask_ligand, batch, ligand_emb, return_all=False, fix_x=False):
+    def forward(self, h, x, mask_ligand, batch, ligand_emb, pocket_emb, return_all=False, fix_x=False):
 
         all_x = [x]
         all_h = [h]
@@ -320,11 +322,22 @@ class UniTransformerO2TwoUpdateGeneral(nn.Module):
 
             for l_idx, layer in enumerate(self.base_block):
                 #module ligand node
-                gamma_beta = self.cond_list[l_idx](ligand_emb) 
-                gamma, beta = gamma_beta.chunk(2, dim=-1)
-                h_film = gamma * h[mask_ligand] + beta 
-                h = h.clone()                                        #
-                h[mask_ligand] = h_film 
+                gamma_beta_lig = self.cond_list_lig[l_idx](ligand_emb) 
+                gamma_lig, beta_lig = gamma_beta_lig.chunk(2, dim=-1)
+                gamma_lig = 1.0 + 0.1 * torch.tanh(gamma_lig)
+                beta_lig  = 0.1 * torch.tanh(beta_lig)
+                #module pocket node
+                gamma_beta_poc = self.cond_list_poc[l_idx](pocket_emb) 
+                gamma_poc, beta_poc = gamma_beta_poc.chunk(2, dim=-1)
+                gamma_poc = 1.0 + 0.1 * torch.tanh(gamma_poc)
+                beta_poc  = 0.1 * torch.tanh(beta_poc)
+
+                h_norm = self.h_norm(h)
+                h = h_norm.clone()
+
+                h[mask_ligand] = gamma_lig * h[mask_ligand] + beta_lig  
+                h[~mask_ligand] = gamma_poc * h[~mask_ligand] + beta_poc 
+
                 h, x = layer(h, x, edge_type, edge_index, mask_ligand, e_w=e_w, fix_x=fix_x)
             all_x.append(x)
             all_h.append(h)

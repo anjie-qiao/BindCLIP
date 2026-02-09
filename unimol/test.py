@@ -64,6 +64,7 @@ def main(args):
     elif args.test_task=="PCBA":
         task.test_pcba(model)
 
+    #task.save_pcba_pairs(model)
 
 def cli_main():
     # add args

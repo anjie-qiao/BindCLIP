@@ -15,7 +15,6 @@ from unicore import tasks
 import numpy as np
 from tqdm import tqdm
 import unicore
-import pandas as pd
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -24,6 +23,12 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger("unimol.inference")
+
+
+#from skchem.metrics import bedroc_score
+from rdkit.ML.Scoring.Scoring import CalcBEDROC, CalcAUC, CalcEnrichment
+from sklearn.metrics import roc_curve
+
 
 
 def main(args):
@@ -53,43 +58,16 @@ def main(args):
 
 
     model.eval()
-    
-    root_dir = args.save_dir
 
-    all_mols = []
-    for dirpath, dirnames, filenames in os.walk(root_dir):
-        for f in filenames:
-            if f.endswith('.lmdb'):
-                all_mols.append(os.path.join(dirpath, f))
-    print(all_mols)
-    for mol_path in tqdm(all_mols, desc="Encoding ligand"):
-        mol_files = [f for f in filenames if f.endswith('_mols.lmdb')]
-
-        dirpath = os.path.dirname(mol_path)
-        mol_file = os.path.basename(mol_path)
-   
-
-        try:
-            # Encode ligand 
-            ligand_emb = task.encode_ligand_atom_level(
-                model,
-                mol_path,
-            )
-        except Exception as e:
-            logger.error(f"Error encoding {mol_path}: {e}")
-            continue
-        
-        save_dir = dirpath
-        os.makedirs(save_dir, exist_ok=True)
-
-        lig_path = os.path.join(save_dir, mol_file.replace('_mols.lmdb', '') +  "_ligand_emb.pt")
-        torch.save(ligand_emb, lig_path)
+    task.test_case(model)
 
 
 def cli_main():
     # add args
+    
+
     parser = options.get_validation_parser()
-    parser.add_argument("--save-dir", type=str, default="", help="path for saved embedding data")
+    parser.add_argument("--test-task", type=str, default="OOD", help="test task")
     options.add_model_args(parser)
     args = options.parse_args_and_arch(parser)
 

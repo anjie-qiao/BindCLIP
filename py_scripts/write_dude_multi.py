@@ -20,8 +20,8 @@ from rdkit.Chem.MolStandardize import rdMolStandardize
 RDLogger.DisableLog('rdApp.*')
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--mol_data_path', type=str, default='/data/protein/DUD-E/raw/all')
-parser.add_argument('--lmdb_path', type=str, default='docked_dude_fromweb2D.lmdb')
+parser.add_argument('--mol_data_path', type=str, default='/HOME/nsccgz_ywang/nsccgz_ywang_wzh/HDD_POOL/qiaoaj/DrugCLIP-Assamble/motivation_analysis_6/data')
+parser.add_argument('--lmdb_path', type=str, default='/HOME/nsccgz_ywang/nsccgz_ywang_wzh/HDD_POOL/qiaoaj/DrugCLIP-Assamble/motivation_analysis_6/data/ood_case.lmdb')
 args = parser.parse_args()
 
 
@@ -42,7 +42,7 @@ def gen_conformation(mol, num_conf=20, num_worker=8):
         return None
     return mol
 
-def convert_2Dmol_to_data(mol, num_conf=10, num_worker=5):
+def convert_2Dmol_to_data(mol, num_conf=5, num_worker=5):
     #to 3D
     mol = gen_conformation(mol, num_conf, num_worker)
     if mol is None:
@@ -143,7 +143,7 @@ def parser(protein_path, mol_path, ligand_path, activity, pocket_index, raid=6):
     pocket_coord = [protein['coord'][i] for i in pocket_atom_idx]
     pocket_residue_type = [protein['residue_type'][i] for i in pocket_atom_idx]
     pocket_name = protein_path.split('/')[-2]
-    pool = mp.Pool(32)
+    pool = mp.Pool(6)
     #mols = [convert_2Dmol_to_data(m) for m in data_mols if m is not None]
     data_mols = [m for m in data_mols if m is not None]
     mols = [m for m in tqdm.tqdm(pool.imap_unordered(convert_2Dmol_to_data, data_mols))]

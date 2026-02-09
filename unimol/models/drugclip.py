@@ -124,6 +124,7 @@ class BindingAffinityModel(BaseUnicoreModel):
         self.ligand_atom_emb = nn.Linear(self.mol_num_class + 1, 127)
         self.protein_atom_emb = nn.Linear(self.pocket_num_class, 127)
         self.v_inference = nn.Sequential(
+            nn.LayerNorm(128),
             nn.Linear(128, 128),  #hidden dim = 128
             ShiftedSoftplus(),
             nn.Linear(128, self.mol_num_class),
@@ -168,6 +169,11 @@ class BindingAffinityModel(BaseUnicoreModel):
         mol_len,
         pocket_len,
         
+        #prepare for decoy
+        decoy_src_tokens,
+        decoy_src_distance,
+        decoy_src_edge_type,
+
         smi_list=None,
         pocket_list=None,
         encode=False,
@@ -243,7 +249,7 @@ class BindingAffinityModel(BaseUnicoreModel):
         batch_protein = torch.repeat_interleave(batch_ids, pocket_len, dim=0)  # (N_poc_total,)
 
         # forward add noise
-        time_step, _ = sample_time(B, num_timesteps=1000, device=device)
+        time_step, _ = sample_time(B, num_timesteps=1000, method='mid_symmetric', device=device)
         a = self.alphas_cumprod.index_select(0, time_step)  # (num_graphs, )
 
         # 2. perturb pos and v
@@ -279,9 +285,11 @@ class BindingAffinityModel(BaseUnicoreModel):
         )
 
         ligand_emb =  mol_encoder_rep[:,1:-1,:]
+        pocket_emb = pocket_encoder_rep[:,1:-1,:]
         ligand_emb_flat = ligand_emb[lig_mask] # alige atom 
- 
-        outputs = self.refine_net(h_all, pos_all, mask_ligand, batch_all, ligand_emb_flat, return_all=False, fix_x=False)
+        pocket_emb_flat = pocket_emb[poc_mask] # alige atom 
+
+        outputs = self.refine_net(h_all, pos_all, mask_ligand, batch_all, ligand_emb_flat, pocket_emb_flat, return_all=False, fix_x=False)
         final_pos, final_h = outputs['x'], outputs['h']
         final_ligand_pos, final_ligand_h = final_pos[mask_ligand], final_h[mask_ligand]
         final_ligand_v = self.v_inference(final_ligand_h)
@@ -289,7 +297,6 @@ class BindingAffinityModel(BaseUnicoreModel):
         pred_ligand_v=final_ligand_v,log_ligand_v0=log_ligand_v0,log_ligand_vt=log_ligand_vt,
         log_alphas_cumprod_v=self.log_alphas_cumprod_v, log_one_minus_alphas_cumprod_v=self.log_one_minus_alphas_cumprod_v, 
         log_alphas_v=self.log_alphas_v, log_one_minus_alphas_v=self.log_one_minus_alphas_v, time_step=time_step,batch_ligand=batch_ligand)
-
         ####################
 
 
@@ -302,9 +309,31 @@ class BindingAffinityModel(BaseUnicoreModel):
         pocket_emb = pocket_emb / pocket_emb.norm(dim=1, keepdim=True)
                 
 
-        ba_predict = torch.matmul(pocket_emb, torch.transpose(mol_emb, 0, 1))
+        #ba_predict = torch.matmul(pocket_emb, torch.transpose(mol_emb, 0, 1))
+        logits_pm = torch.matmul(pocket_emb, torch.transpose(mol_emb, 0, 1))
 
-        
+        # for decoy 
+        decoy_padding_mask = decoy_src_tokens.eq(self.mol_model.padding_idx)
+        decoy_x = self.mol_model.embed_tokens(decoy_src_tokens)
+        decoy_graph_attn_bias = get_dist_features(
+            decoy_src_distance, decoy_src_edge_type, "mol"
+        )
+        decoy_outputs = self.mol_model.encoder(
+            decoy_x,
+            padding_mask=decoy_padding_mask,
+            attn_mask=decoy_graph_attn_bias,
+        )
+        decoy_encoder_rep = decoy_outputs[0]
+        decoy_rep = decoy_encoder_rep[:, 0, :]
+
+        decoy_emb = self.mol_project(decoy_rep)
+        decoy_emb = decoy_emb / decoy_emb.norm(dim=1, keepdim=True)
+
+        logits_pd = torch.matmul(pocket_emb, torch.transpose(decoy_emb, 0, 1))
+
+        ba_predict = torch.cat([logits_pm, logits_pd], dim=1)  # [B, 2B]
+        # ==========
+
         # mask duplicate mols and pockets in same batch
         
         bsz = ba_predict.shape[0]
@@ -325,17 +354,26 @@ class BindingAffinityModel(BaseUnicoreModel):
         mol_duplicate_matrix = 1*mol_duplicate_matrix
         mol_duplicate_matrix = torch.tensor(mol_duplicate_matrix, dtype=ba_predict.dtype).cuda()
 
-        
-        
-
         onehot_labels = torch.eye(bsz).cuda()
         indicater_matrix = pocket_duplicate_matrix + mol_duplicate_matrix - 2*onehot_labels
+
+        ## for decoy 
+        extra_cols = logits_pd.size(1)  # B
+        new_mask = torch.zeros(bsz, bsz + extra_cols, dtype=ba_predict.dtype, device=ba_predict.device)
+        new_mask[:, :bsz] = indicater_matrix
+        indicater_matrix = new_mask
+        #==================
         
         #print(ba_predict.shape)
         ba_predict = ba_predict *  self.logit_scale.exp().detach()
         ba_predict = indicater_matrix * -1e6 + ba_predict
 
-        return ba_predict, self.logit_scale.exp(), loss_diffusion #_pocket, ba_predict_mol, loss_diffusion
+        extra = {
+            "mol_emb": mol_emb,
+            "decoy_emb": decoy_emb,
+        }
+       
+        return ba_predict, self.logit_scale.exp(), loss_diffusion, extra #_pocket, ba_predict_mol, loss_diffusion
 
     def set_num_updates(self, num_updates):
         """State from trainer to pass along to model at every update."""

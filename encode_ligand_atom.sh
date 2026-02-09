@@ -1,7 +1,7 @@
 results_path="./test"  # replace to your results path
 batch_size=8
-weight_path="checkpoint_best.pt"
-SAVE_DIR="./motivation_analysis/sampled_subset/" # path to the cached mol embedding file
+weight_path="ckpt/savedirrandom_zinc/checkpoint_best_seed-1.pt"
+SAVE_DIR="./motivation_analysis_1/sampled_subset/" # path to the cached mol embedding file
 
 CUDA_VISIBLE_DEVICES="0" python ./unimol/encode_ligand_atom.py --user-dir ./unimol $data_path "./data" --valid-subset test \
        --results-path $results_path \

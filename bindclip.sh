@@ -2,11 +2,11 @@
 
 data_path="data/train_no_test_af"
 
+param_dir="hingeloss_lmdba1.5_seed42"
+save_dir="ckpt/savedir${param_dir}"
 
-save_dir="savedir"
-
-tmp_save_dir="tmp_save_dir"
-tsb_dir="tsb_dir"
+tmp_save_dir="ckpt/tmp/tmp_save_dir${param_dir}"
+tsb_dir="ckpt/tsb/tsb_dir${param_dir}"
 
 n_gpu=1
 MASTER_PORT=10055
@@ -26,13 +26,13 @@ lr=1e-3
 
 export NCCL_ASYNC_ERROR_HANDLING=1
 export OMP_NUM_THREADS=1
-CUDA_VISIBLE_DEVICES="1"  $(which unicore-train) $data_path --user-dir ./unimol --train-subset train --valid-subset valid \
+CUDA_VISIBLE_DEVICES="0"  $(which unicore-train) $data_path --user-dir ./unimol --train-subset train --valid-subset valid \
        --num-workers 0 --ddp-backend=c10d \
-       --task drugclip --loss in_batch_softmax --arch drugclip  \
+       --task drugclip --loss in_batch_softmax_hinge --arch drugclip  \
        --max-pocket-atoms 256 \
        --optimizer adam --adam-betas "(0.9, 0.999)" --adam-eps 1e-8 --clip-norm 1.0 \
        --lr-scheduler polynomial_decay --lr $lr --warmup-ratio $warmup --max-epoch $epoch --batch-size $batch_size --batch-size-valid $batch_size_valid \
-       --fp16 --fp16-init-scale 4 --fp16-scale-window 256 --update-freq $update_freq --seed 1 \
+       --fp16 --fp16-init-scale 4 --fp16-scale-window 256 --update-freq $update_freq --seed 42 \
        --tensorboard-logdir $tsb_dir \
        --log-interval 100 --log-format simple \
        --validate-interval 1 \

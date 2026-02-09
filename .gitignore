@@ -1,8 +1,11 @@
 **/__pycache__/
-data/
+/data/
 crossdocked_data/
-motivation_analysis/
-retrieval_case/
-*dir/
+motivation_analysis_*/
+retrieval*/
+*dir*/
 Uni-Core-main/
 *.pt
+ckpt/
+/unimol/encode_*
+encod*

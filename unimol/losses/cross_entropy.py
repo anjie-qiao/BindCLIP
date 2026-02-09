@@ -521,6 +521,10 @@ class IBSLoss(CrossEntropyLoss):
     def __init__(self, task):
         super().__init__(task)
 
+    def set_num_updates(self, num_updates):
+        self.num_updates = 0
+        self.num_updates = num_updates
+
     def forward(self, model, sample, reduce=True, fix_encoder=False):
         """Compute the loss for the given sample.
 
@@ -542,7 +546,7 @@ class IBSLoss(CrossEntropyLoss):
         loss_diff,_,_ = net_output[2]
         loss = self.compute_loss(model, logit_output, sample, reduce=reduce)
         #print(loss.item(), loss_diff.item())  15:1.9
-        loss = loss + 1.0 * loss_diff
+        loss = loss + 0.5 * loss_diff
         sample_size = logit_output.size(0)
         targets = torch.arange(sample_size, dtype=torch.long).cuda()
         affinities = sample["target"]["finetune_target"].view(-1)
@@ -571,7 +575,9 @@ class IBSLoss(CrossEntropyLoss):
         return loss, sample_size, logging_output
 
     def compute_loss(self, model, net_output, sample, reduce=True):
-        lprobs_pocket = F.log_softmax(net_output.float(), dim=-1)
+        logits = net_output.float()
+        B = logits.size(0)
+        lprobs_pocket = F.log_softmax(logits, dim=-1)
         lprobs_pocket = lprobs_pocket.view(-1, lprobs_pocket.size(-1))
         sample_size = lprobs_pocket.size(0)
         targets= torch.arange(sample_size, dtype=torch.long).view(-1).cuda()
@@ -583,7 +589,8 @@ class IBSLoss(CrossEntropyLoss):
             reduction="sum" if reduce else "none",
         )
         
-        lprobs_mol = F.log_softmax(torch.transpose(net_output.float(), 0, 1), dim=-1)
+        logits_mol_side = logits[:, :B] 
+        lprobs_mol = F.log_softmax(torch.transpose(logits_mol_side, 0, 1), dim=-1)
         lprobs_mol = lprobs_mol.view(-1, lprobs_mol.size(-1))
         lprobs_mol = lprobs_mol[:sample_size]
 
@@ -596,6 +603,383 @@ class IBSLoss(CrossEntropyLoss):
         
         loss = 0.5 * loss_pocket + 0.5 * loss_mol
         return loss
+    
+
+    @staticmethod
+    def reduce_metrics(logging_outputs, split="valid") -> None:
+        """Aggregate logging outputs from data parallel training."""
+        metrics.log_scalar("scale", logging_outputs[0].get("scale"), round=3)
+        loss_sum = sum(log.get("loss", 0) for log in logging_outputs)
+        sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
+        # we divide by log(2) to convert the loss from base e to base 2
+        metrics.log_scalar(
+            "loss", loss_sum / sample_size / math.log(2), sample_size, round=3
+        )
+        if "valid" in split or "test" in split:
+            acc_sum = sum(
+                sum(log.get("prob").argmax(dim=-1) == log.get("target"))
+                for log in logging_outputs
+            )
+            
+            prob_list = []
+            if len(logging_outputs) == 1:
+                prob_list.append(logging_outputs[0].get("prob"))
+            else:
+                for i in range(len(logging_outputs)-1):
+                    prob_list.append(logging_outputs[i].get("prob"))
+            probs = torch.cat(prob_list, dim=0)
+            
+            metrics.log_scalar(
+                f"{split}_acc", acc_sum / sample_size, sample_size, round=3
+            )
+
+            metrics.log_scalar(
+                "valid_neg_loss", -loss_sum / sample_size / math.log(2), sample_size, round=3
+            )
+            
+            
+            targets = torch.cat(
+                [log.get("target", 0) for log in logging_outputs], dim=0
+            )
+            print(targets.shape, probs.shape)
+
+            targets = targets[:len(probs)]
+            bedroc_list = []
+            auc_list = []
+            for i in range(len(probs)):
+                prob = probs[i]
+                target = targets[i]
+                label = torch.zeros_like(prob)
+                label[target]=1.0
+                cur_auc = roc_auc_score(label.cpu(), prob.cpu())
+                auc_list.append(cur_auc)
+                bedroc = calculate_bedroc(label.cpu(), prob.cpu(), 80.5)
+                bedroc_list.append(bedroc)
+            bedroc = np.mean(bedroc_list)
+            auc = np.mean(auc_list)
+            
+            top_k_acc = top_k_accuracy_score(targets.cpu(), probs.cpu(), k=3, normalize=True)
+            metrics.log_scalar(f"{split}_auc", auc, sample_size, round=3)
+            metrics.log_scalar(f"{split}_bedroc", bedroc, sample_size, round=3)
+            metrics.log_scalar(f"{split}_top3_acc", top_k_acc, sample_size, round=3)
+
+            
+
+    @staticmethod
+    def logging_outputs_can_be_summed(is_train) -> bool:
+        """
+        Whether the logging outputs returned by `forward` can be summed
+        across workers prior to calling `reduce_metrics`. Setting this
+        to True will improves distributed training speed.
+        """
+        return is_train
+
+
+@register_loss("in_batch_softmax_hinge")
+class IBSLoss_rank(CrossEntropyLoss):
+    def __init__(self, task):
+        super().__init__(task)
+        self.lambda_hinge = 1.5
+        self.num_updates = 0
+        self.margin = 0.0
+    
+    def set_num_updates(self, num_updates):
+        self.num_updates = num_updates
+
+    def forward(self, model, sample, reduce=True, fix_encoder=False):
+        """Compute the loss for the given sample.
+        """
+        net_output = model(
+            **sample["net_input"],
+            smi_list = sample["smi_name"],
+            pocket_list = sample["pocket_name"],
+            features_only=True,
+            fix_encoder=fix_encoder,
+            is_train = self.training
+        )
+        
+        logit_output = net_output[0]
+        loss_diff,_,_ = net_output[2]
+
+        extra = net_output[3]
+        loss = self.compute_loss(model, logit_output, extra, sample, reduce=reduce)
+        #print(loss.item(), loss_diff.item())  15:1.9
+        loss = loss + 0.5 * loss_diff
+        sample_size = logit_output.size(0)
+        targets = torch.arange(sample_size, dtype=torch.long).cuda()
+        affinities = sample["target"]["finetune_target"].view(-1)
+        if not self.training:
+            logit_output = logit_output[:,:sample_size]
+            probs = F.softmax(logit_output.float(), dim=-1).view(
+                -1, logit_output.size(-1)
+            )
+            logging_output = {
+                "loss": loss.data,
+                "prob": probs.data,
+                "target": targets,
+                "smi_name": sample["smi_name"],
+                "sample_size": sample_size,
+                "bsz": targets.size(0),
+                "scale": net_output[1].data,
+                "affinity": affinities,
+            }
+        else:
+            logging_output = {
+                "loss": loss.data,
+                "sample_size": sample_size,
+                "bsz": targets.size(0),
+                "scale": net_output[1].data
+            }
+        return loss, sample_size, logging_output
+
+    def compute_loss(self, model, net_output, extra, sample, reduce=True):
+        logits = net_output.float()
+        B = logits.size(0)
+        lprobs_pocket = F.log_softmax(logits, dim=-1)
+        lprobs_pocket = lprobs_pocket.view(-1, lprobs_pocket.size(-1))
+        sample_size = lprobs_pocket.size(0)
+        targets= torch.arange(sample_size, dtype=torch.long).view(-1).cuda()
+
+        # pocket retrieve mol
+        loss_pocket = F.nll_loss(
+            lprobs_pocket,
+            targets,
+            reduction="sum" if reduce else "none",
+        )
+        
+        logits_mol_side = logits[:, :B] 
+        lprobs_mol = F.log_softmax(torch.transpose(logits_mol_side, 0, 1), dim=-1)
+        lprobs_mol = lprobs_mol.view(-1, lprobs_mol.size(-1))
+        lprobs_mol = lprobs_mol[:sample_size]
+
+        # mol retrieve pocket
+        loss_mol = F.nll_loss(
+            lprobs_mol,
+            targets,
+            reduction="sum" if reduce else "none",
+        )
+        
+        loss = 0.5 * loss_pocket + 0.5 * loss_mol
+
+        ##====
+        lig_emb_aux = torch.cat([extra['mol_emb'].detach(), extra['decoy_emb']], dim=0)   # [2B, D]
+        logit_lig = torch.matmul(lig_emb_aux, lig_emb_aux.t())    
+        hard_idx = torch.arange(B, device=logits.device)
+        hard_neg = logit_lig[hard_idx, hard_idx + B]
+
+        # row = logit_lig[hard_idx, :].clone()      # [B, 2B]
+        # row[hard_idx, hard_idx] = 0.0
+        # row[hard_idx, hard_idx + B] = 0.0
+        # avg_neg = (row.sum(dim=-1) / (2*B - 2)).detach()
+
+        row = logit_lig[hard_idx, :B].clone()      # [B, 2B]
+        row[hard_idx, hard_idx] = 0.0
+        avg_neg = (row.sum(dim=-1) / (B - 1)).detach()
+        #avg_neg = logit_lig[hard_idx, :].mean(dim=-1).detach()
+        
+        # 0: is hard, 1: is random
+        hir = sample["hard_label"].view(-1).to(logits.device).float()  # 0/1
+        mask = (1.0 - hir)
+        loss_mean = F.relu(avg_neg - hard_neg) * mask
+        loss_mean = loss_mean.sum() if reduce else loss_mean
+        # with torch.no_grad():
+        #     mask = (1.0 - hir)
+        #     gap = (avg_neg - hard_neg + self.margin)
+        #     vr_all = (gap > 0).float().mean()
+        #     vr_true = ((gap > 0) & (mask > 0)).float().sum() / mask.sum().clamp_min(1.0)
+        #     print(
+        #         "loss_aux", loss_mean.item(),                  
+        #         "avg", avg_neg.mean().item(),
+        #         "hard", hard_neg.mean().item(),
+        #         "gap", gap.mean().item(),                       
+        #         "vr_all", vr_all.item(),
+        #         "vr_true", vr_true.item(),
+        #         "hir", hir.mean().item(),
+        #         "n_true", mask.sum().item()
+        #     )
+        loss = loss + self.lambda_hinge * loss_mean
+
+        return loss
+    
+
+    @staticmethod
+    def reduce_metrics(logging_outputs, split="valid") -> None:
+        """Aggregate logging outputs from data parallel training."""
+        metrics.log_scalar("scale", logging_outputs[0].get("scale"), round=3)
+        loss_sum = sum(log.get("loss", 0) for log in logging_outputs)
+        sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
+        # we divide by log(2) to convert the loss from base e to base 2
+        metrics.log_scalar(
+            "loss", loss_sum / sample_size / math.log(2), sample_size, round=3
+        )
+        if "valid" in split or "test" in split:
+            acc_sum = sum(
+                sum(log.get("prob").argmax(dim=-1) == log.get("target"))
+                for log in logging_outputs
+            )
+            
+            prob_list = []
+            if len(logging_outputs) == 1:
+                prob_list.append(logging_outputs[0].get("prob"))
+            else:
+                for i in range(len(logging_outputs)-1):
+                    prob_list.append(logging_outputs[i].get("prob"))
+            probs = torch.cat(prob_list, dim=0)
+            
+            metrics.log_scalar(
+                f"{split}_acc", acc_sum / sample_size, sample_size, round=3
+            )
+
+            metrics.log_scalar(
+                "valid_neg_loss", -loss_sum / sample_size / math.log(2), sample_size, round=3
+            )
+            
+            
+            targets = torch.cat(
+                [log.get("target", 0) for log in logging_outputs], dim=0
+            )
+            print(targets.shape, probs.shape)
+
+            targets = targets[:len(probs)]
+            bedroc_list = []
+            auc_list = []
+            for i in range(len(probs)):
+                prob = probs[i]
+                target = targets[i]
+                label = torch.zeros_like(prob)
+                label[target]=1.0
+                cur_auc = roc_auc_score(label.cpu(), prob.cpu())
+                auc_list.append(cur_auc)
+                bedroc = calculate_bedroc(label.cpu(), prob.cpu(), 80.5)
+                bedroc_list.append(bedroc)
+            bedroc = np.mean(bedroc_list)
+            auc = np.mean(auc_list)
+            
+            top_k_acc = top_k_accuracy_score(targets.cpu(), probs.cpu(), k=3, normalize=True)
+            metrics.log_scalar(f"{split}_auc", auc, sample_size, round=3)
+            metrics.log_scalar(f"{split}_bedroc", bedroc, sample_size, round=3)
+            metrics.log_scalar(f"{split}_top3_acc", top_k_acc, sample_size, round=3)
+
+            
+
+    @staticmethod
+    def logging_outputs_can_be_summed(is_train) -> bool:
+        """
+        Whether the logging outputs returned by `forward` can be summed
+        across workers prior to calling `reduce_metrics`. Setting this
+        to True will improves distributed training speed.
+        """
+        return is_train
+
+
+
+@register_loss("in_batch_softmax_weighted")
+class IBSLoss_weighted(CrossEntropyLoss):
+    def __init__(self, task):
+        super().__init__(task)
+        self.lambda_property  = 0.05
+
+    def forward(self, model, sample, reduce=True, fix_encoder=False):
+        """Compute the loss for the given sample.
+
+        Returns a tuple with three elements:
+        1) the loss
+        2) the sample size, which is used as the denominator for the gradient
+        3) logging outputs to display while training
+        """
+        net_output = model(
+            **sample["net_input"],
+            smi_list = sample["smi_name"],
+            pocket_list = sample["pocket_name"],
+            features_only=True,
+            fix_encoder=fix_encoder,
+            is_train = self.training
+        )
+        
+        logit_output = net_output[0]
+        loss_diff,_,_ = net_output[2]
+        loss = self.compute_loss(model, logit_output, sample, reduce=reduce)
+        #print(loss.item(), loss_diff.item())  15:1.9
+        loss = loss + 0.5 * loss_diff
+        sample_size = logit_output.size(0)
+        targets = torch.arange(sample_size, dtype=torch.long).cuda()
+        affinities = sample["target"]["finetune_target"].view(-1)
+        if not self.training:
+            logit_output = logit_output[:,:sample_size]
+            probs = F.softmax(logit_output.float(), dim=-1).view(
+                -1, logit_output.size(-1)
+            )
+            logging_output = {
+                "loss": loss.data,
+                "prob": probs.data,
+                "target": targets,
+                "smi_name": sample["smi_name"],
+                "sample_size": sample_size,
+                "bsz": targets.size(0),
+                "scale": net_output[1].data,
+                "affinity": affinities,
+            }
+        else:
+            logging_output = {
+                "loss": loss.data,
+                "sample_size": sample_size,
+                "bsz": targets.size(0),
+                "scale": net_output[1].data
+            }
+        return loss, sample_size, logging_output
+
+    def compute_loss(self, model, net_output, sample, reduce=True):
+        #=============
+        # weighted_loss
+        logits = net_output.float()
+        B = logits.size(0)
+        logits = self._apply_property_weight(logits, sample["scaffold_fp"], sample["decoy_scaffold_fp"])
+        #=============
+        lprobs_pocket = F.log_softmax(logits, dim=-1)
+        lprobs_pocket = lprobs_pocket.view(-1, lprobs_pocket.size(-1))
+        sample_size = lprobs_pocket.size(0)
+        targets= torch.arange(sample_size, dtype=torch.long).view(-1).cuda()
+
+        # pocket retrieve mol
+        loss_pocket = F.nll_loss(
+            lprobs_pocket,
+            targets,
+            reduction="sum" if reduce else "none",
+        )
+        
+        logits_mol_side = logits[:, :B] 
+        lprobs_mol = F.log_softmax(torch.transpose(logits_mol_side, 0, 1), dim=-1)
+        lprobs_mol = lprobs_mol.view(-1, lprobs_mol.size(-1))
+        lprobs_mol = lprobs_mol[:sample_size]
+
+        # mol retrieve pocket
+        loss_mol = F.nll_loss(
+            lprobs_mol,
+            targets,
+            reduction="sum" if reduce else "none",
+        )
+        
+        loss = 0.5 * loss_pocket + 0.5 * loss_mol
+        return loss
+    
+    def _apply_property_weight(self, logits, prop_vec_batch, decoy_prop_vec_batch):
+        if self.lambda_property == 0: 
+            return logits
+
+        B, L = logits.shape
+        X_pos = prop_vec_batch.float().to(logits.device)
+        X_dec = decoy_prop_vec_batch.float().to(logits.device)
+        X_all = torch.cat([X_pos, X_dec], dim=0)
+
+        S = X_pos @ X_all.t()    # [B, L]
+        idx = torch.arange(B, device=logits.device)
+        S[idx, idx] = 0.0 
+        # mask_high = S > 0.9   # maybe false negative
+        # S[mask_high] = 0.0
+        alpha = 1.0 + self.lambda_property * S
+        logits = logits + torch.log(alpha + 1e-8)
+
+        return logits
 
     @staticmethod
     def reduce_metrics(logging_outputs, split="valid") -> None:

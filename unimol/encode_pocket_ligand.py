@@ -56,40 +56,66 @@ def main(args):
     
     root_dir = args.save_dir
 
-    all_mols = []
+    # all_mols = []
+    # for dirpath, dirnames, filenames in os.walk(root_dir):
+    #     for f in filenames:
+    #         if f.endswith('_mols.lmdb'):
+    #             all_mols.append(os.path.join(dirpath, f))
+
+    # for mol_path in tqdm(all_mols, desc="Encoding pocket-ligand pairs"):
+    #     mol_files = [f for f in filenames if f.endswith('_mols.lmdb')]
+
+    #     dirpath = os.path.dirname(mol_path)
+    #     mol_file = os.path.basename(mol_path)
+    #     prefix = mol_file.replace('_mols.lmdb', '')
+    #     pocket_file = prefix + '_pocket10_pocket.lmdb'
+    #     pocket_path = os.path.join(dirpath, pocket_file)
+
+    #     try:
+    #         # Encode ligand + pocket
+    #         ligand_emb, pocket_emb = task.encode_pocket_and_ligand(
+    #             model,
+    #             mol_path,
+    #             pocket_path,
+    #         )
+    #     except Exception as e:
+    #         logger.error(f"Error encoding {mol_path} / {pocket_path}: {e}")
+    #         continue
+        
+    #     save_dir = dirpath
+    #     os.makedirs(save_dir, exist_ok=True)
+
+    #     lig_path = os.path.join(save_dir, mol_file.replace('_mols.lmdb', '') +  "_ligand_emb.pt")
+    #     pkt_path = os.path.join(save_dir, pocket_file.replace('_pocket.lmdb', '') + "_pocket_emb.pt")
+
+    #     torch.save(ligand_emb, lig_path)
+    #     torch.save(pocket_emb, pkt_path)
+    ligand_lmdbs = []
     for dirpath, dirnames, filenames in os.walk(root_dir):
         for f in filenames:
-            if f.endswith('_mols.lmdb'):
-                all_mols.append(os.path.join(dirpath, f))
-
-    for mol_path in tqdm(all_mols, desc="Encoding pocket-ligand pairs"):
-        mol_files = [f for f in filenames if f.endswith('_mols.lmdb')]
-
-        dirpath = os.path.dirname(mol_path)
-        mol_file = os.path.basename(mol_path)
-        prefix = mol_file.replace('_mols.lmdb', '')
-        pocket_file = prefix + '_pocket10_pocket.lmdb'
-        pocket_path = os.path.join(dirpath, pocket_file)
-
+            if f.endswith(".lmdb"):
+                ligand_lmdbs.append(os.path.join(dirpath, f))
+    logger.info(f"Found {len(ligand_lmdbs)} ligand lmdb files under {root_dir}")
+    for lig_path in tqdm(ligand_lmdbs, desc="Encoding ligands"):
         try:
-            # Encode ligand + pocket
-            ligand_emb, pocket_emb = task.encode_pocket_and_ligand(
+            ligand_emb = task.encode_ligand_cls(
                 model,
-                mol_path,
-                pocket_path,
+                lig_path,
             )
         except Exception as e:
-            logger.error(f"Error encoding {mol_path} / {pocket_path}: {e}")
+            logger.error(f"Error encoding ligand {lig_path}: {e}")
             continue
-        
-        save_dir = dirpath
+
+        save_dir = os.path.dirname(lig_path)
         os.makedirs(save_dir, exist_ok=True)
 
-        lig_path = os.path.join(save_dir, mol_file.replace('_mols.lmdb', '') +  "_ligand_emb.pt")
-        pkt_path = os.path.join(save_dir, pocket_file.replace('_pocket.lmdb', '') + "_pocket_emb.pt")
+        prefix = os.path.splitext(os.path.basename(lig_path))[0]
+        out_path = os.path.join(save_dir, prefix + "_ligand_emb.pt")
 
-        torch.save(ligand_emb, lig_path)
-        torch.save(pocket_emb, pkt_path)
+        torch.save(ligand_emb, out_path)
+        logger.info(f"Saved ligand embedding to {out_path}")
+
+
 
 def cli_main():
     # add args
