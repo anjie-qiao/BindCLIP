@@ -12,7 +12,7 @@ We follow the environment setup of [Uni-Mol](https://github.com/dptech-corp/Uni-
 
 ## Data
 
-We follow the **DrugCLIP** data setup for training and evaluation (LMDB format), including training data (PDBBind with HomoAug augmentation), and evaluation data for virtual screening benchmarks (e.g., DUD-E / LIT-PCBA).
+We follow the DrugCLIP data setup for training and evaluation (LMDB format), including training data (PDBBind with HomoAug augmentation), and evaluation data for virtual screening benchmarks (e.g., DUD-E / LIT-PCBA).
 
 All data are available at:
 https://drive.google.com/drive/folders/1zW1MGpgunynFxTKXC2Q4RgWxZmg6CInV?usp=sharing
