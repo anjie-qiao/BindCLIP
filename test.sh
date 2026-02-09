@@ -1,6 +1,6 @@
 results_path="./test"  # replace to your results path
 batch_size=8
-weight_path="ckpt/savedirunimol/checkpoint_best_seed-7.pt"
+weight_path="checkpoint_best_seed.pt"
 
 TASK="DUDE" # DUDE or PCBA
 
