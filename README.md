@@ -1,10 +1,20 @@
-# BindCLIP: A Unified Contrastive–Generative Representation Learning Framework for Virtual Screening
+<p align="center">
+  <img src="docs/logo.png" alt="BindCLIP logo" width="350">
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/xxxx/blob/main/LICENSE)
+<h2 align="center">
+  A Unified Contrastive–Generative Representation Learning Framework<br>
+  for Virtual Screening
+</h2>
 
-<!-- [[Code](xxxx - Overview)] -->
-Official implementation of **BindCLIP**, proposed in the paper  
-**“BindCLIP: A Unified Contrastive–Generative Representation Learning Framework for Virtual Screening”**.
+<p align="center">
+  Official implementation of <em>BindCLIP</em>.
+</p>
+
+<p align="center">
+  <a href="https://arxiv.org/abs/2602.15236">📄arXiv</a> •
+  <a href="./LICENSE">📜License</a>
+</p>
 
 # Requirements
 
