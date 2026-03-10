@@ -1,11 +1,10 @@
-<p align="center">
-  <img src="docs/logo.png" alt="BindCLIP logo" width="350">
-</p>
-
-<h2 align="center">
-  A Unified Contrastive–Generative Representation Learning Framework<br>
-  for Virtual Screening
-</h2>
+<div align="center">
+  <img src="docs/logo.png" alt="BindCLIP logo" width="180">
+  <h2>
+    A Unified Contrastive–Generative Representation Learning Framework<br>
+    for Virtual Screening
+  </h2>
+</div>
 
 <p align="center">
   Official implementation of <em>BindCLIP</em>.
