@@ -54,7 +54,7 @@ conda install biopandas
 
 We release the training data used in BindCLIP, together with the external molecular library used for negative augmentation:
 
-https://drive.google.com/drive/folders/1F48zwXEtmAgwGGuKCXOMFR21U8fxEAJh?dmr=1&ec=wgc-drive-%5Bmodule%5D-goto
+https://drive.google.com/drive/folders/1F48zwXEtmAgwGGuKCXOMFR21U8fxEAJh?usp=sharing
 
 The released training data contains two versions corresponding to the hard-negative construction strategies described in the paper:
 
@@ -65,10 +65,7 @@ The released training data contains two versions corresponding to the hard-negat
 
 ## Evaluation Data
 
-We follow the DrugCLIP evaluation setup for virtual screening benchmarks, including:
-
-- DUD-E
-- LIT-PCBA
+We follow the DrugCLIP evaluation setup for virtual screening benchmarks, including: LIT-PCBA and DUD-E
 
 The processed benchmark data can be downloaded from:
 
@@ -78,7 +75,7 @@ https://drive.google.com/drive/folders/1zW1MGpgunynFxTKXC2Q4RgWxZmg6CInV?usp=sha
 
 We release two pretrained checkpoints:
 
-https://drive.google.com/drive/folders/1KKID5DU_hh2e5sE5Xmem10lfSy_qWwIE?dmr=1&ec=wgc-drive-%5Bmodule%5D-goto
+https://drive.google.com/drive/folders/1KKID5DU_hh2e5sE5Xmem10lfSy_qWwIE?usp=sharing
 
 The released checkpoints correspond to two different negative sampling strategies used during training:
 
