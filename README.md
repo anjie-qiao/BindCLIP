@@ -111,10 +111,12 @@ Example files (`pocket.lmdb` and `mols.lmdb`) can be found in the DrugCLIP Googl
 If you find this work useful, please consider citing:
 
 ```bibtex
-@article{qiao2026bindclip,
+@inproceedings{qiao2026bindclip,
   title={BindCLIP: A Unified Contrastive-Generative Representation Learning Framework for Virtual Screening},
   author={Qiao, Anjie and Wang, Zhen and Li, Yaliang and Rao, Jiahua and Yang, Yuedong},
-  journal={arXiv preprint arXiv:2602.15236},
-  year={2026}
+  year={2026},
+  booktitle = {Proceedings of the 32nd ACM SIGKDD Conference on Knowledge Discovery and Data Mining V.2},
+  pages = {11854–11865},
+  numpages = {12}
 }
 ```
