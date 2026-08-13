@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://arxiv.org/abs/2602.15236">📄 arXiv</a> •
+  <a href="https://dl.acm.org/doi/10.1145/3770855.3819040">📄 Paper</a> •
   <a href="./LICENSE">📜 License</a>
 </p>
 
